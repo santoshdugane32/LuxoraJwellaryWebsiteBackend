@@ -7,6 +7,7 @@ import com.example.demo.model.User;
 import com.example.demo.repository.UserRepository;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -27,52 +28,124 @@ public class UserController {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
-    // =========================
-    // REGISTER
-    // =========================
-    @PostMapping("/register")
-    public User register(@RequestBody User user) {
 
-        // Default role
-        if (user.getRole() == null || user.getRole().isEmpty()) {
-            user.setRole("USER");
+    // =====================================================
+    // REGISTER
+    // =====================================================
+
+    @PostMapping("/register")
+    public ResponseEntity<?> register(@RequestBody User user) {
+
+        // -----------------------------------------
+        // Check if email already exists
+        // -----------------------------------------
+
+        Optional<User> existingUser =
+                userRepository.findByEmail(user.getEmail());
+
+        if (existingUser.isPresent()) {
+
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body("Email already registered");
         }
+
+
+        // -----------------------------------------
+        // Public registration is ALWAYS USER
+        // -----------------------------------------
+
+        user.setRole("USER");
+
+
+        // -----------------------------------------
+        // Encrypt password
+        // -----------------------------------------
 
         user.setPassword(
                 passwordEncoder.encode(user.getPassword())
         );
 
-        return userRepository.save(user);
+
+        // -----------------------------------------
+        // Save user
+        // -----------------------------------------
+
+        User savedUser = userRepository.save(user);
+
+        return ResponseEntity.ok(savedUser);
     }
 
-    // =========================
+
+    // =====================================================
     // LOGIN
-    // =========================
+    // =====================================================
+
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest request) {
+    public ResponseEntity<?> login(
+            @RequestBody LoginRequest request) {
+
+
+        // -----------------------------------------
+        // Check email
+        // -----------------------------------------
 
         Optional<User> optionalUser =
                 userRepository.findByEmail(request.getEmail());
 
+
         if (optionalUser.isEmpty()) {
-            return ResponseEntity.badRequest()
+
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
                     .body("Invalid Email or Password");
         }
 
+
         User user = optionalUser.get();
+
+
+        // -----------------------------------------
+        // Check password
+        // -----------------------------------------
 
         if (!passwordEncoder.matches(
                 request.getPassword(),
                 user.getPassword())) {
 
-            return ResponseEntity.badRequest()
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
                     .body("Invalid Email or Password");
         }
 
-        // Generate JWT
-        String token = jwtUtil.generateToken(user.getEmail());
 
-        // Build response
+        // -----------------------------------------
+        // Check role
+        // -----------------------------------------
+
+        if (request.getRole() == null ||
+                user.getRole() == null ||
+                !request.getRole()
+                        .equalsIgnoreCase(user.getRole())) {
+
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body("Invalid Role");
+        }
+
+
+        // -----------------------------------------
+        // Generate JWT
+        // -----------------------------------------
+
+        String token =
+                jwtUtil.generateToken(user.getEmail());
+
+
+        // -----------------------------------------
+        // Login Response
+        // -----------------------------------------
+
         LoginResponse response = new LoginResponse(
                 user.getId(),
                 user.getName(),
@@ -82,7 +155,7 @@ public class UserController {
                 "Login Successful"
         );
 
+
         return ResponseEntity.ok(response);
     }
-
 }

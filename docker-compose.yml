@@ -1,0 +1,45 @@
+version: "3.7"
+
+services:
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    networks:
+      - my-networks
+
+    depends_on:
+      postgres:
+        condition: service_healthy  # Opens only AFTER the healthcheck above passes
+
+  postgres: #anything name u can write its exact same we need to write instead of local host
+    image: postgres:latest
+
+    environment:
+      POSTGRES_DB: luxora
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123
+
+    ports:
+      - "5432:5432"
+    volumes:
+      - my-volumes:/var/lib/postgresql
+
+    networks:
+      - my-networks
+
+    # 👇 This script checks if Postgres is actually ready for traffic
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d luxora" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+
+volumes:
+  my-volumes:
+
+networks:
+  my-networks:
+    driver: bridge
