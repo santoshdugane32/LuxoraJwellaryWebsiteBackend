@@ -1,11 +1,14 @@
-FROM ubuntu:latest
-LABEL authors="santo"
+FROM maven:3.9-eclipse-temurin-22 AS build
 
-ENTRYPOINT ["top", "-b"]
+WORKDIR /app
 
+COPY pom.xml .
+COPY src ./src
+
+RUN mvn clean package -DskipTests
 
 FROM openjdk:22-jdk
 WORKDIR /app
-COPY target/Jewellerydocker.jar app.jar
+COPY --from=build /app/target/*.jar app.jar
 ENTRYPOINT ["java","-jar","app.jar"]
 EXPOSE 8080

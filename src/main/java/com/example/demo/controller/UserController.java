@@ -37,11 +37,39 @@ public class UserController {
     public ResponseEntity<?> register(@RequestBody User user) {
 
         // -----------------------------------------
-        // Check if email already exists
+        // Validate email
+        // -----------------------------------------
+
+        if (user.getEmail() == null ||
+                user.getEmail().trim().isEmpty()) {
+
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body("Email is required");
+        }
+
+
+        // -----------------------------------------
+        // Validate password
+        // -----------------------------------------
+
+        if (user.getPassword() == null ||
+                user.getPassword().trim().isEmpty()) {
+
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body("Password is required");
+        }
+
+
+        // -----------------------------------------
+        // Check duplicate email
         // -----------------------------------------
 
         Optional<User> existingUser =
-                userRepository.findByEmail(user.getEmail());
+                userRepository.findByEmail(
+                        user.getEmail().trim()
+                );
 
         if (existingUser.isPresent()) {
 
@@ -85,13 +113,45 @@ public class UserController {
     public ResponseEntity<?> login(
             @RequestBody LoginRequest request) {
 
+        // -----------------------------------------
+        // Validate request
+        // -----------------------------------------
+
+        if (request.getEmail() == null ||
+                request.getEmail().trim().isEmpty()) {
+
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body("Email is required");
+        }
+
+
+        if (request.getPassword() == null ||
+                request.getPassword().isEmpty()) {
+
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body("Password is required");
+        }
+
+
+        if (request.getRole() == null ||
+                request.getRole().trim().isEmpty()) {
+
+            return ResponseEntity
+                    .status(HttpStatus.BAD_REQUEST)
+                    .body("Role is required");
+        }
+
 
         // -----------------------------------------
-        // Check email
+        // Find user by email
         // -----------------------------------------
 
         Optional<User> optionalUser =
-                userRepository.findByEmail(request.getEmail());
+                userRepository.findByEmail(
+                        request.getEmail().trim()
+                );
 
 
         if (optionalUser.isEmpty()) {
@@ -123,10 +183,15 @@ public class UserController {
         // Check role
         // -----------------------------------------
 
-        if (request.getRole() == null ||
-                user.getRole() == null ||
+
+
+
+        if (user.getRole() == null ||
                 !request.getRole()
-                        .equalsIgnoreCase(user.getRole())) {
+                        .trim()
+                        .equalsIgnoreCase(
+                                user.getRole().trim()
+                        )) {
 
             return ResponseEntity
                     .status(HttpStatus.BAD_REQUEST)
