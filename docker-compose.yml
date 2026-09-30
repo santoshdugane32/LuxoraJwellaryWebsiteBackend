@@ -6,7 +6,7 @@ services:
     ports:
       - "8080:8080"
     networks:
-      - my-networks
+      - shared-network
 
     depends_on:
       postgres:
@@ -26,7 +26,7 @@ services:
       - my-volumes:/var/lib/postgresql
 
     networks:
-      - my-networks
+      - shared-network
 
     # 👇 This script checks if Postgres is actually ready for traffic
     healthcheck:
@@ -40,5 +40,7 @@ volumes:
   my-volumes:
 
 networks:
-  my-networks:
-    driver: bridge
+  shared-network:
+    external: true  #it is used frontend and backend purpose not again create every time
+    name: jewellery-shared-network
+
