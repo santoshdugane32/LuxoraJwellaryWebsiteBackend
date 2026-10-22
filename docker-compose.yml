@@ -1,46 +1,43 @@
 
 services:
-
   app:
-    build: .
+    image: santosh6363/jwellary_backend-app:latest
+    container_name: luxora-backend
     ports:
       - "8080:8080"
-    networks:
-      - shared-network
-
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/luxora
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-123}
     depends_on:
       postgres:
-        condition: service_healthy  # Opens only AFTER the healthcheck above passes
+        condition: service_healthy
+    networks:
+      - shared-network
+    restart: unless-stopped
 
-  postgres: #anything name u can write its exact same we need to write instead of local host
-    image: postgres:latest
-
+  postgres:
+    image: postgres:16
+    container_name: luxora-postgres
     environment:
       POSTGRES_DB: luxora
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 123
-
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
     volumes:
-      - my-volumes:/var/lib/postgresql
-
-    networks:
-      - shared-network
-
-    # 👇 This script checks if Postgres is actually ready for traffic
+      - my-volumes:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres -d luxora" ]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d luxora"]
       interval: 5s
       timeout: 5s
       retries: 5
-
+    networks:
+      - shared-network
+    restart: unless-stopped
 
 volumes:
   my-volumes:
 
 networks:
   shared-network:
-    external: true  #it is used frontend and backend purpose not again create every time
+    external: true
     name: jewellery-shared-network
-
