@@ -1,5 +1,23 @@
 
 services:
+  postgres:
+    image: postgres:16
+    container_name: luxora-postgres
+    environment:
+      POSTGRES_DB: luxora
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "123"
+    volumes:
+      - my-volumes:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d luxora"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - shared-network
+    restart: unless-stopped
+
   app:
     image: santosh6363/jwellary_backend-app:latest
     container_name: luxora-backend
@@ -8,28 +26,10 @@ services:
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/luxora
       SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-123}
+      SPRING_DATASOURCE_PASSWORD: "123"
     depends_on:
       postgres:
         condition: service_healthy
-    networks:
-      - shared-network
-    restart: unless-stopped
-
-  postgres:
-    image: postgres:16
-    container_name: luxora-postgres
-    environment:
-      POSTGRES_DB: luxora
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
-    volumes:
-      - my-volumes:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d luxora"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
     networks:
       - shared-network
     restart: unless-stopped
