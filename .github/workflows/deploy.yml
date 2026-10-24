@@ -1,0 +1,64 @@
+name: Spring-boot ci-cd and deploy
+
+on:
+  push:
+    branches:
+      - main
+env:
+  image_name: luxora-backend
+
+jobs:
+  build-deploy:   #this user created any name u want u can write
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Setting up Java
+        uses: actions/setup-java@v4
+
+        with:
+          distribution: temurin
+          java-version: '22'
+          cache: maven
+
+      - name: Build Jar
+        run: mvn clean package -DskipTests
+
+      - name: Build Docker Image
+        run: docker build -t santosh6363/jwellary_backend-app:latest .
+
+      - name: login to Dockerhub
+        uses: docker/login-action@v3
+
+        with:
+          username: ${{secrets.DOCKERHUB_USERNAME}}
+          password: ${{secrets.DOCKERHUB_TOKEN}}
+
+      - name: Push Images to Dockerhub
+        run: docker push santosh6363/jwellary_backend-app:latest
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1
+
+        with:
+          host: ${{secrets.EC2_HOST}}
+          username: ${{secrets.EC2_USER}}
+          key: ${{secrets.EC2_SSH_KEY}}
+          script: |
+            docker pull santosh6363/jwellary_backend-app:latest
+            docker stop spring-boot-app || true
+            docker rm spring-boot-app || true
+            docker run -d --name spring-boot-app --restart unless-stopped |
+                        -p 8080:8080 \
+                        docker push santosh6363/jwellary_backend-app:latest
+            docker image prune -f
+            
+            
+
+        
+
+
+
+
