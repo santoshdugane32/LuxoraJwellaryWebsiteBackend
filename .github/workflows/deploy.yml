@@ -1,64 +1,97 @@
-name: Spring-boot ci-cd and deploy
 
-on:
-  push:
-    branches:
-      - main
-env:
-  image_name: luxora-backend
+  name: LUXORA Backend CI/CD
 
-jobs:
-  build-deploy:   #this user created any name u want u can write
-    runs-on: ubuntu-latest
+  on:
+    push:
+      branches:
+        - main
 
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
+    workflow_dispatch:
 
-      - name: Setting up Java
-        uses: actions/setup-java@v4
+  permissions:
+    contents: read
 
-        with:
-          distribution: temurin
-          java-version: '22'
-          cache: maven
+  env:
+    IMAGE_NAME: jwellary_backend-app
 
-      - name: Build Jar
-        run: mvn clean package -DskipTests
+  jobs:
+    build-deploy:
+      runs-on: ubuntu-latest
 
-      - name: Build Docker Image
-        run: docker build -t ${{secrets.DOCKERHUB_USERNAME}}/jwellary_backend-app:latest .
+      steps:
+        # 1. Download source code
+        - name: Checkout Source
+          uses: actions/checkout@v4
 
-      - name: login to Dockerhub
-        uses: docker/login-action@v3
+        # 2. Set up Java
+        - name: Setup Java
+          uses: actions/setup-java@v4
+          with:
+            distribution: temurin
+            java-version: '22'
+            cache: maven
 
-        with:
-          username: ${{secrets.DOCKERHUB_USERNAME}}
-          password: ${{secrets.DOCKERHUB_TOKEN}}
+        # 3. Build Spring Boot application
+        - name: Build JAR
+          run: mvn clean package -DskipTests
 
-      - name: Push Images to Dockerhub
-        run: docker push ${{secrets.DOCKERHUB_USERNAME}}/jwellary_backend-app:latest
+        # 4. Build Docker image
+        - name: Build Docker Image
+          run: |
+            docker build \
+              -t ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest .
 
-      - name: Deploy to EC2
-        uses: appleboy/ssh-action@v1
+        # 5. Login to Docker Hub
+        - name: Login to Docker Hub
+          uses: docker/login-action@v3
+          with:
+            username: ${{ secrets.DOCKERHUB_USERNAME }}
+            password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-        with:
-          host: ${{secrets.EC2_HOST}}
-          username: ${{secrets.EC2_USER}}
-          key: ${{secrets.EC2_SSH_KEY}}
-          script: |
-            docker pull ${{secrets.DOCKERHUB_USERNAME}}/jwellary_backend-app:latest
-            docker stop spring-boot-app || true
-            docker rm spring-boot-app || true
-            docker run -d --name spring-boot-app --restart unless-stopped |
-                        -p 8080:8080 \
-                        docker push ${{secrets.DOCKERHUB_USERNAME}}/jwellary_backend-app:latest
-            docker image prune -f
-            
-            
+        # 6. Push image
+        - name: Push Docker Image
+          run: |
+            docker push \
+              ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
 
-        
-
-
-
-
+        # 7. Deploy to existing EC2
+        - name: Deploy to EC2
+          uses: appleboy/ssh-action@v1
+          env:
+            DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+            DB_USERNAME: ${{ secrets.DB_USERNAME }}
+            DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          with:
+            host: ${{ secrets.EC2_HOST }}
+            username: ${{ secrets.EC2_USER }}
+            key: ${{ secrets.EC2_SSH_KEY }}
+            envs: DOCKERHUB_USERNAME,DB_USERNAME,DB_PASSWORD
+            script: |
+              set -eu
+              
+              IMAGE="$DOCKERHUB_USERNAME/jwellary_backend-app:latest"
+              
+              # Download the new backend image
+              docker pull "$IMAGE"
+              
+              # Stop and remove only the old backend container
+              docker stop luxora-backend
+              docker rm luxora-backend
+              
+              # Start the updated backend on the existing network
+              docker run -d \
+                --name luxora-backend \
+                --restart unless-stopped \
+                --network jewellery-shared-network \
+                --network-alias app \
+                -p 8080:8080 \
+                -e SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/luxora \
+                -e SPRING_DATASOURCE_USERNAME="$DB_USERNAME" \
+                -e SPRING_DATASOURCE_PASSWORD="$DB_PASSWORD" \
+                "$IMAGE"
+              
+              # Display deployment status
+              docker ps --filter name=luxora-backend
+              
+              # Display recent application logs
+              docker logs --tail 60 luxora-backend
