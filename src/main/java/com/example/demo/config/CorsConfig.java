@@ -2,7 +2,6 @@ package com.example.demo.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -15,21 +14,14 @@ public class CorsConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
 
-        CorsConfiguration configuration =
-                new CorsConfiguration();
-
-        // ==========================================
-        // FRONTEND
-        // ==========================================
+        CorsConfiguration configuration = new CorsConfiguration();
 
         configuration.setAllowedOrigins(
-                List.of("http://localhost:5173")
+                List.of(
+                        "http://localhost:5173",
+                        "http://16.4.54.198"
+                )
         );
-
-
-        // ==========================================
-        // HTTP METHODS
-        // ==========================================
 
         configuration.setAllowedMethods(
                 List.of(
@@ -41,11 +33,6 @@ public class CorsConfig {
                 )
         );
 
-
-        // ==========================================
-        // HEADERS
-        // ==========================================
-
         configuration.setAllowedHeaders(
                 List.of(
                         "Authorization",
@@ -53,25 +40,12 @@ public class CorsConfig {
                 )
         );
 
-
-        // ==========================================
-        // CREDENTIALS
-        // ==========================================
-
         configuration.setAllowCredentials(true);
-
-
-        // ==========================================
-        // APPLY CORS TO ALL ENDPOINTS
-        // ==========================================
 
         UrlBasedCorsConfigurationSource source =
                 new UrlBasedCorsConfigurationSource();
 
-        source.registerCorsConfiguration(
-                "/**",
-                configuration
-        );
+        source.registerCorsConfiguration("/**", configuration);
 
         return source;
     }
