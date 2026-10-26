@@ -15,7 +15,7 @@ public class GoldRateScheduler {
     }
 
     // Runs every day at midnight Indian Standard Time
-    @Scheduled(cron = "0 0 0 * * *", zone = "Asia/Kolkata")
+    @Scheduled(cron = "0 0 */3 * * *", zone = "Asia/Kolkata")
     public void updateRate() {
         try {
             service.updateGoldRate();
