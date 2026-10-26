@@ -73,7 +73,7 @@ public class GoldRateService {
     public synchronized GoldRate updateGoldRate() {
         try {
             Map<?, ?> response = webClient.get()
-                    .uri("/XAU/INR")
+                    .uri("/price/XAU/INR")
                     .header("x-access-token", apiKey)
                     .retrieve()
                     .bodyToMono(Map.class)
