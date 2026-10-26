@@ -12,7 +12,7 @@ public class GoldRateScheduler {
     private GoldRateService service;
 
     // 🔥 Runs every 1 hour 0th minutes(production safe)
-    @Scheduled(cron = "0 0 * * * *")
+    @Scheduled(cron = "0 0 * * * *",zone = "Asia/Kolkata")
     public void updateRate() {
 
         try {
