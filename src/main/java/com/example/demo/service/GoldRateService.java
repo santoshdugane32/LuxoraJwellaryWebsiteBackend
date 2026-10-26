@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.netty.http.client.HttpClient;
 
 import java.math.BigDecimal;
@@ -77,7 +78,7 @@ public class GoldRateService {
         try {
             if (apiKey == null || apiKey.isBlank()) {
                 throw new IllegalStateException(
-                        "GoldAPI key is missing. Check goldapi.key configuration.");
+                        "GoldAPI key is missing.");
             }
 
             Map<?, ?> response = webClient.get()
@@ -92,39 +93,28 @@ public class GoldRateService {
                         "GoldAPI returned an empty response.");
             }
 
-            Object priceValue = response.get("price_gram_24k");
-
-            if (priceValue == null) {
-                System.err.println(
-                        "GoldAPI response keys: " + response.keySet());
-                throw new IllegalStateException(
-                        "Missing price_gram_24k in GoldAPI response.");
-            }
+            System.out.println(
+                    "GoldAPI unit: " + response.get("unit"));
 
             BigDecimal baseGold24kInr =
-                    new BigDecimal(priceValue.toString());
+                    extract24kPricePerGram(response);
 
-            if (baseGold24kInr.signum() <= 0) {
-                throw new IllegalStateException(
-                        "GoldAPI returned an invalid gold price.");
-            }
-
-            // Apply your existing pricing adjustments.
-            BigDecimal internalStructuralMultiplier = BigDecimal.ONE
+            // Keep your existing pricing adjustment logic.
+            BigDecimal multiplier = BigDecimal.ONE
                     .add(importDuty)
                     .add(hedgingCost)
                     .add(jewellerMargin)
                     .add(demandSpread)
                     .add(makingCharges);
 
-            BigDecimal subTotal24k = baseGold24kInr
-                    .multiply(internalStructuralMultiplier);
+            BigDecimal subTotal24k =
+                    baseGold24kInr.multiply(multiplier);
 
-            BigDecimal final24k = subTotal24k
-                    .multiply(BigDecimal.ONE.add(gst));
+            BigDecimal final24k =
+                    subTotal24k.multiply(BigDecimal.ONE.add(gst));
 
-            BigDecimal final22k = final24k
-                    .multiply(new BigDecimal("0.916"));
+            BigDecimal final22k =
+                    final24k.multiply(new BigDecimal("0.916"));
 
             long gold24k = final24k
                     .setScale(0, RoundingMode.HALF_UP)
@@ -141,9 +131,8 @@ public class GoldRateService {
 
             GoldRate saved = repo.save(rate);
 
-            // Update cache only after the database save succeeds.
-            this.cachedRate = saved;
-            this.cacheTime = LocalDateTime.now();
+            cachedRate = saved;
+            cacheTime = LocalDateTime.now();
 
             System.out.println(
                     "Gold rate updated successfully. 24K: ₹"
@@ -151,29 +140,93 @@ public class GoldRateService {
 
             return saved;
 
+        } catch (WebClientResponseException e) {
+            System.err.println(
+                    "GoldAPI HTTP error: " + e.getStatusCode()
+                            + ". Check API key, access and request limits.");
+
+            return getDatabaseFallback(e);
+
         } catch (Exception e) {
-            // Log the error, but never log the API key.
             System.err.println(
                     "Gold rate update failed: "
                             + e.getClass().getSimpleName()
                             + ": " + e.getMessage());
 
-            return repo.findTopByOrderByIdDesc()
-                    .orElseThrow(() -> new RuntimeException(
-                            "GoldAPI failed and no previous gold rate exists in the database.",
-                            e));
+            return getDatabaseFallback(e);
         }
     }
 
-    public GoldRate getLatestRate() {
-        GoldRate tempRate = this.cachedRate;
-        LocalDateTime tempTime = this.cacheTime;
+    private BigDecimal extract24kPricePerGram(Map<?, ?> response) {
+        // Format 1: price_gram_24k is already per gram.
+        Object directPrice = response.get("price_gram_24k");
 
-        if (tempRate != null
-                && tempTime != null
-                && tempTime.isAfter(
-                LocalDateTime.now().minusMinutes(10))) {
-            return tempRate;
+        if (directPrice instanceof Number
+                || directPrice instanceof String) {
+            return positivePrice(directPrice);
+        }
+
+        // Format 2: price_per_unit is an object with a gram value.
+        Object perUnit = response.get("price_per_unit");
+
+        if (perUnit instanceof Map<?, ?> unitMap) {
+            Object gramPrice = unitMap.get("gram");
+
+            if (gramPrice != null) {
+                return positivePrice(gramPrice);
+            }
+        }
+
+        // Format 3: melt_price_per_gram contains a 24k value.
+        Object meltPrice = response.get("melt_price_per_gram");
+
+        if (meltPrice instanceof Map<?, ?> meltMap) {
+            Object karat24 = meltMap.get("24k");
+
+            if (karat24 == null) {
+                karat24 = meltMap.get("24K");
+            }
+
+            if (karat24 != null) {
+                return positivePrice(karat24);
+            }
+        }
+
+        // A plain "price" usually represents a troy ounce.
+        // Never treat it as a per-gram price without conversion.
+        System.err.println(
+                "GoldAPI response keys: " + response.keySet());
+
+        throw new IllegalStateException(
+                "No recognized 24K per-gram price found. "
+                        + "Check the response unit and JSON structure.");
+    }
+
+    private BigDecimal positivePrice(Object value) {
+        BigDecimal price = new BigDecimal(value.toString());
+
+        if (price.signum() <= 0) {
+            throw new IllegalStateException(
+                    "GoldAPI returned a non-positive price.");
+        }
+
+        return price;
+    }
+
+    private GoldRate getDatabaseFallback(Exception cause) {
+        return repo.findTopByOrderByIdDesc()
+                .orElseThrow(() -> new RuntimeException(
+                        "GoldAPI failed and no historical rate exists.",
+                        cause));
+    }
+
+    public GoldRate getLatestRate() {
+        GoldRate rate = cachedRate;
+        LocalDateTime time = cacheTime;
+
+        if (rate != null && time != null
+                && time.isAfter(LocalDateTime.now().minusMinutes(10))) {
+            return rate;
         }
 
         return repo.findTopByOrderByIdDesc()
