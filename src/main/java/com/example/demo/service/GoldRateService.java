@@ -1,3 +1,4 @@
+
 package com.example.demo.service;
 
 import com.example.demo.model.GoldRate;
@@ -14,8 +15,8 @@ import reactor.netty.http.client.HttpClient;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDateTime;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -31,7 +32,6 @@ public class GoldRateService {
     @Value("${goldapi.key}")
     private String apiKey;
 
-    // Dynamically injected external configuration values from application.properties
     @Value("${gold.rate.import-duty:0.06}")
     private BigDecimal importDuty;
 
@@ -60,18 +60,26 @@ public class GoldRateService {
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)
                 .responseTimeout(Duration.ofSeconds(5))
                 .doOnConnected(conn -> conn
-                        .addHandlerLast(new ReadTimeoutHandler(5, TimeUnit.SECONDS))
-                        .addHandlerLast(new WriteTimeoutHandler(5, TimeUnit.SECONDS)));
+                        .addHandlerLast(
+                                new ReadTimeoutHandler(5, TimeUnit.SECONDS))
+                        .addHandlerLast(
+                                new WriteTimeoutHandler(5, TimeUnit.SECONDS)));
 
         this.webClient = WebClient.builder()
                 .baseUrl("https://www.goldapi.io/api")
-                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .clientConnector(
+                        new ReactorClientHttpConnector(httpClient))
                 .defaultHeader("Accept", "application/json")
                 .build();
     }
 
     public synchronized GoldRate updateGoldRate() {
         try {
+            if (apiKey == null || apiKey.isBlank()) {
+                throw new IllegalStateException(
+                        "GoldAPI key is missing. Check goldapi.key configuration.");
+            }
+
             Map<?, ?> response = webClient.get()
                     .uri("/price/XAU/INR")
                     .header("x-access-token", apiKey)
@@ -79,15 +87,29 @@ public class GoldRateService {
                     .bodyToMono(Map.class)
                     .block();
 
-            if (response == null || response.get("price_gram_24k") == null) {
-                throw new RuntimeException("Empty or invalid API response payload.");
+            if (response == null) {
+                throw new IllegalStateException(
+                        "GoldAPI returned an empty response.");
             }
 
-            BigDecimal baseGold24kInr = new BigDecimal(response.get("price_gram_24k").toString());
+            Object priceValue = response.get("price_gram_24k");
 
-            // ========================================================
-            // ADDITIVE MULTIPLIER ENGINE using injected properties
-            // ========================================================
+            if (priceValue == null) {
+                System.err.println(
+                        "GoldAPI response keys: " + response.keySet());
+                throw new IllegalStateException(
+                        "Missing price_gram_24k in GoldAPI response.");
+            }
+
+            BigDecimal baseGold24kInr =
+                    new BigDecimal(priceValue.toString());
+
+            if (baseGold24kInr.signum() <= 0) {
+                throw new IllegalStateException(
+                        "GoldAPI returned an invalid gold price.");
+            }
+
+            // Apply your existing pricing adjustments.
             BigDecimal internalStructuralMultiplier = BigDecimal.ONE
                     .add(importDuty)
                     .add(hedgingCost)
@@ -95,17 +117,22 @@ public class GoldRateService {
                     .add(demandSpread)
                     .add(makingCharges);
 
-            // Calculate 24K Subtotal before tax
-            BigDecimal subTotal24k = baseGold24kInr.multiply(internalStructuralMultiplier);
+            BigDecimal subTotal24k = baseGold24kInr
+                    .multiply(internalStructuralMultiplier);
 
-            // Apply consumption-side GST (3%) from application.properties
-            BigDecimal final24k = subTotal24k.multiply(BigDecimal.ONE.add(gst));
+            BigDecimal final24k = subTotal24k
+                    .multiply(BigDecimal.ONE.add(gst));
 
-            // Calculate 22K via Indian 916 Bullion standard (Derived from the final 24K rate)
-            BigDecimal final22k = final24k.multiply(BigDecimal.valueOf(0.916));
+            BigDecimal final22k = final24k
+                    .multiply(new BigDecimal("0.916"));
 
-            long gold24k = final24k.setScale(0, RoundingMode.HALF_UP).longValue();
-            long gold22k = final22k.setScale(0, RoundingMode.HALF_UP).longValue();
+            long gold24k = final24k
+                    .setScale(0, RoundingMode.HALF_UP)
+                    .longValueExact();
+
+            long gold22k = final22k
+                    .setScale(0, RoundingMode.HALF_UP)
+                    .longValueExact();
 
             GoldRate rate = new GoldRate();
             rate.setGold24k(gold24k);
@@ -114,15 +141,27 @@ public class GoldRateService {
 
             GoldRate saved = repo.save(rate);
 
+            // Update cache only after the database save succeeds.
             this.cachedRate = saved;
             this.cacheTime = LocalDateTime.now();
+
+            System.out.println(
+                    "Gold rate updated successfully. 24K: ₹"
+                            + gold24k + ", 22K: ₹" + gold22k);
 
             return saved;
 
         } catch (Exception e) {
-            System.err.println("WARN: Network connection timeout or API outage encountered. Reverting to fallback. Error: " + e.getMessage());
+            // Log the error, but never log the API key.
+            System.err.println(
+                    "Gold rate update failed: "
+                            + e.getClass().getSimpleName()
+                            + ": " + e.getMessage());
+
             return repo.findTopByOrderByIdDesc()
-                    .orElseThrow(() -> new RuntimeException("API Connection failed and no historical fallback records found within database.", e));
+                    .orElseThrow(() -> new RuntimeException(
+                            "GoldAPI failed and no previous gold rate exists in the database.",
+                            e));
         }
     }
 
@@ -130,7 +169,10 @@ public class GoldRateService {
         GoldRate tempRate = this.cachedRate;
         LocalDateTime tempTime = this.cacheTime;
 
-        if (tempRate != null && tempTime != null && tempTime.isAfter(LocalDateTime.now().minusMinutes(10))) {
+        if (tempRate != null
+                && tempTime != null
+                && tempTime.isAfter(
+                LocalDateTime.now().minusMinutes(10))) {
             return tempRate;
         }
 
