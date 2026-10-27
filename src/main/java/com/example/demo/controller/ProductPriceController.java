@@ -1,43 +1,58 @@
+
 package com.example.demo.controller;
 
 import com.example.demo.model.GoldRate;
 import com.example.demo.model.Product;
 import com.example.demo.repository.ProductRepository;
 import com.example.demo.service.GoldRateService;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.example.demo.service.PriceService;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/product-price")
 @CrossOrigin(origins = "*")
 public class ProductPriceController {
 
-    @Autowired
-    private ProductRepository productRepo;
+    private final ProductRepository productRepo;
+    private final GoldRateService goldRateService;
+    private final PriceService priceService;
 
-    @Autowired
-    private GoldRateService goldRateService;
+    public ProductPriceController(
+            ProductRepository productRepo,
+            GoldRateService goldRateService,
+            PriceService priceService
+    ) {
+        this.productRepo = productRepo;
+        this.goldRateService = goldRateService;
+        this.priceService = priceService;
+    }
 
     @GetMapping("/{id}")
-    public Long getPrice(@PathVariable Long id) {
-
-        Product p = productRepo.findById(id).orElseThrow();
+    public long getPrice(@PathVariable Long id) {
+        Product product = productRepo.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Product not found"
+                ));
 
         GoldRate rate = goldRateService.getLatestRate();
 
-        double goldCost =
-                rate.getGold24k() * p.getWeightInGrams();
+        if (rate == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "Gold rate is currently unavailable"
+            );
+        }
 
-        double makingCharge =
-                goldCost * p.getMakingChargePercent() / 100;
-
-        double subtotal =
-                goldCost + makingCharge;
-
-        double gst =
-                subtotal * 0.03;
-
-        return Math.round(subtotal + gst);
+        try {
+            return priceService.calculatePrice(product, rate);
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    ex.getMessage()
+            );
+        }
     }
-
 }

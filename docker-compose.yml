@@ -5,15 +5,16 @@ services:
     container_name: luxora-postgres
     environment:
       POSTGRES_DB: luxora
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "123"
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in your .env file}
     volumes:
       - my-volumes:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d luxora"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 10s
     networks:
       - shared-network
     restart: unless-stopped
@@ -24,9 +25,14 @@ services:
     ports:
       - "8080:8080"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/luxora
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: "123"
+      DB_URL: jdbc:postgresql://postgres:5432/luxora
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in your .env file}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in your .env file}
+      JWT_EXPIRATION: 86400000
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      GOLDAPI_KEY: ${GOLDAPI_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

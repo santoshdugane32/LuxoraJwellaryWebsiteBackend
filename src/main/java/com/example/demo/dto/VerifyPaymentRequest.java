@@ -1,5 +1,6 @@
 package com.example.demo.dto;
 
+import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -11,16 +12,18 @@ import lombok.Setter;
 @AllArgsConstructor
 public class VerifyPaymentRequest {
 
-    // Internal Order ID
+    // Internal order ID
     private Long orderId;
 
-    // Razorpay Order ID
+    // Razorpay order ID
+    @NotBlank(message = "Razorpay order ID is required")
     private String razorpayOrderId;
 
-    // Razorpay Payment ID
+    // Razorpay payment ID
+    @NotBlank(message = "Razorpay payment ID is required")
     private String razorpayPaymentId;
 
-    // Razorpay Signature
+    // Razorpay signature
+    @NotBlank(message = "Razorpay signature is required")
     private String razorpaySignature;
-
 }

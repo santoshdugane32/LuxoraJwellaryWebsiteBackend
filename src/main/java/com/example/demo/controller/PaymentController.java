@@ -1,20 +1,31 @@
+
 package com.example.demo.controller;
 
 import com.example.demo.dto.CreateOrderRequest;
 import com.example.demo.dto.VerifyPaymentRequest;
 import com.example.demo.service.PaymentService;
 import com.razorpay.Order;
+
+import jakarta.validation.Valid;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
 
 @RestController
 @RequestMapping("/api/payment")
-@CrossOrigin(origins = "*")
 public class PaymentController {
+
+    private static final Logger logger =
+            LoggerFactory.getLogger(PaymentController.class);
 
     private final PaymentService paymentService;
 
@@ -22,116 +33,143 @@ public class PaymentController {
         this.paymentService = paymentService;
     }
 
-    // ==========================
+    private boolean isAuthenticated(Authentication auth) {
+        return auth != null
+                && auth.isAuthenticated()
+                && !(auth instanceof AnonymousAuthenticationToken);
+    }
+
     // CREATE RAZORPAY ORDER
-    // ==========================
     @PostMapping("/create-order")
     public ResponseEntity<?> createOrder(
-            @RequestBody CreateOrderRequest request,
+            @Valid @RequestBody CreateOrderRequest request,
             Authentication auth
     ) {
-
-        try {
-
-            System.out.println("\n======================================");
-            System.out.println("CREATE PAYMENT REQUEST");
-            System.out.println("======================================");
-
-            if (auth != null) {
-                System.out.println("USER      : " + auth.getName());
-            } else {
-                System.out.println("USER      : NULL");
-            }
-
-            System.out.println("ORDER ID  : " + request.getOrderId());
-            System.out.println("AMOUNT    : " + request.getAmount());
-
-            Order razorpayOrder = paymentService.createOrder(
-                    request.getOrderId(),
-                    request.getAmount()
-            );
-
-            System.out.println("RAZORPAY ORDER CREATED SUCCESSFULLY");
-            System.out.println("ORDER ID : " + razorpayOrder.get("id"));
-
-            // Return JSON instead of Razorpay Order object
-            Map<String, Object> response = razorpayOrder.toJson().toMap();
-
-            return ResponseEntity.ok(response);
-
-        } catch (Exception e) {
-
-            System.out.println("\n======================================");
-            System.out.println("CREATE PAYMENT FAILED");
-            System.out.println("======================================");
-
-            e.printStackTrace();
-
-            return ResponseEntity
-                    .status(HttpStatus.INTERNAL_SERVER_ERROR)
+        if (!isAuthenticated(auth)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of(
                             "success", false,
-                            "message", e.getMessage()
+                            "message", "Authentication required"
                     ));
+        }
+
+        if (request == null || request.getOrderId() == null) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of(
+                            "success", false,
+                            "message", "Order ID is required"
+                    ));
+        }
+
+        try {
+            // The backend reads the saved order amount.
+            // Never trust an amount submitted by React.
+            Order razorpayOrder = paymentService.createOrder(
+                    request.getOrderId(),
+                    auth.getName()
+            );
+
+            // Preserve the response structure expected by Checkout.jsx.
+            return ResponseEntity.ok(razorpayOrder.toJson().toMap());
+
+        } catch (ResponseStatusException ex) {
+            logger.warn(
+                    "Razorpay order request rejected: {}",
+                    ex.getStatusCode()
+            );
+
+            return ResponseEntity.status(ex.getStatusCode())
+                    .body(Map.of(
+                            "success", false,
+                            "message", ex.getReason() != null
+                                    ? ex.getReason()
+                                    : "Payment order request rejected"
+                    ));
+
+        } catch (Exception ex) {
+            logger.error("Failed to create Razorpay order", ex);
+
+            return ResponseEntity.status(
+                    HttpStatus.INTERNAL_SERVER_ERROR
+            ).body(Map.of(
+                    "success", false,
+                    "message", "Unable to create payment order"
+            ));
         }
     }
 
-    // ==========================
-    // VERIFY PAYMENT
-    // ==========================
+    // VERIFY RAZORPAY PAYMENT
     @PostMapping("/verify")
     public ResponseEntity<?> verifyPayment(
-            @RequestBody VerifyPaymentRequest request,
+            @Valid @RequestBody VerifyPaymentRequest request,
             Authentication auth
     ) {
-
-        try {
-
-            System.out.println("\n======================================");
-            System.out.println("VERIFY PAYMENT");
-            System.out.println("======================================");
-
-            if (auth != null) {
-                System.out.println("USER : " + auth.getName());
-            } else {
-                System.out.println("USER : NULL");
-            }
-
-            System.out.println("ORDER ID          : " + request.getOrderId());
-            System.out.println("RAZORPAY ORDER ID : " + request.getRazorpayOrderId());
-            System.out.println("PAYMENT ID        : " + request.getRazorpayPaymentId());
-
-            boolean verified = paymentService.verifyPayment(request);
-
-            System.out.println("VERIFIED : " + verified);
-
-            if (verified) {
-
-                return ResponseEntity.ok(Map.of(
-                        "success", true,
-                        "message", "Payment Verified Successfully"
-                ));
-            }
-
-            return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "message", "Payment Verification Failed"
-            ));
-
-        } catch (Exception e) {
-
-            System.out.println("\n======================================");
-            System.out.println("VERIFY PAYMENT FAILED");
-            System.out.println("======================================");
-
-            e.printStackTrace();
-
-            return ResponseEntity
-                    .status(HttpStatus.INTERNAL_SERVER_ERROR)
+        if (!isAuthenticated(auth)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(Map.of(
                             "success", false,
-                            "message", e.getMessage()
+                            "message", "Authentication required"
                     ));
+        }
+
+        if (request == null
+                || request.getRazorpayOrderId() == null
+                || request.getRazorpayOrderId().isBlank()
+                || request.getRazorpayPaymentId() == null
+                || request.getRazorpayPaymentId().isBlank()
+                || request.getRazorpaySignature() == null
+                || request.getRazorpaySignature().isBlank()) {
+
+            return ResponseEntity.badRequest()
+                    .body(Map.of(
+                            "success", false,
+                            "message",
+                            "Payment verification details are required"
+                    ));
+        }
+
+        try {
+            boolean verified = paymentService.verifyPayment(
+                    request,
+                    auth.getName()
+            );
+
+            if (!verified) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of(
+                                "success", false,
+                                "message", "Payment verification failed"
+                        ));
+            }
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Payment verified successfully"
+            ));
+
+        } catch (ResponseStatusException ex) {
+            logger.warn(
+                    "Payment verification request rejected: {}",
+                    ex.getStatusCode()
+            );
+
+            return ResponseEntity.status(ex.getStatusCode())
+                    .body(Map.of(
+                            "success", false,
+                            "message", ex.getReason() != null
+                                    ? ex.getReason()
+                                    : "Payment verification request rejected"
+                    ));
+
+        } catch (Exception ex) {
+            logger.error("Payment verification failed", ex);
+
+            return ResponseEntity.status(
+                    HttpStatus.INTERNAL_SERVER_ERROR
+            ).body(Map.of(
+                    "success", false,
+                    "message", "Unable to verify payment"
+            ));
         }
     }
 }

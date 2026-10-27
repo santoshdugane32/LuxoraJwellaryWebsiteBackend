@@ -5,211 +5,88 @@ import com.example.demo.dto.LoginRequest;
 import com.example.demo.dto.LoginResponse;
 import com.example.demo.model.User;
 import com.example.demo.repository.UserRepository;
+import com.example.demo.service.UserService;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
-import java.util.Optional;
+import java.util.Locale;
 
 @RestController
 @RequestMapping("/api/users")
 @CrossOrigin(origins = "*")
 public class UserController {
 
-    @Autowired
-    private UserRepository userRepository;
+    private final UserRepository userRepository;
+    private final JwtUtil jwtUtil;
+    private final PasswordEncoder passwordEncoder;
+    private final UserService userService;
 
-    @Autowired
-    private JwtUtil jwtUtil;
-
-    @Autowired
-    private PasswordEncoder passwordEncoder;
-
-
-    // =====================================================
-    // REGISTER
-    // =====================================================
-
-    @PostMapping("/register")
-    public ResponseEntity<?> register(@RequestBody User user) {
-
-        // -----------------------------------------
-        // Validate email
-        // -----------------------------------------
-
-        if (user.getEmail() == null ||
-                user.getEmail().trim().isEmpty()) {
-
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body("Email is required");
-        }
-
-
-        // -----------------------------------------
-        // Validate password
-        // -----------------------------------------
-
-        if (user.getPassword() == null ||
-                user.getPassword().trim().isEmpty()) {
-
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body("Password is required");
-        }
-
-
-        // -----------------------------------------
-        // Check duplicate email
-        // -----------------------------------------
-
-        Optional<User> existingUser =
-                userRepository.findByEmail(
-                        user.getEmail().trim()
-                );
-
-        if (existingUser.isPresent()) {
-
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body("Email already registered");
-        }
-
-
-        // -----------------------------------------
-        // Public registration is ALWAYS USER
-        // -----------------------------------------
-
-        user.setRole("USER");
-
-
-        // -----------------------------------------
-        // Encrypt password
-        // -----------------------------------------
-
-        user.setPassword(
-                passwordEncoder.encode(user.getPassword())
-        );
-
-
-        // -----------------------------------------
-        // Save user
-        // -----------------------------------------
-
-        User savedUser = userRepository.save(user);
-
-        return ResponseEntity.ok(savedUser);
+    public UserController(
+            UserRepository userRepository,
+            JwtUtil jwtUtil,
+            PasswordEncoder passwordEncoder,
+            UserService userService) {
+        this.userRepository = userRepository;
+        this.jwtUtil = jwtUtil;
+        this.passwordEncoder = passwordEncoder;
+        this.userService = userService;
     }
 
+    // REGISTER
+    @PostMapping("/register")
+    public ResponseEntity<?> register(@RequestBody User user) {
+        User savedUser = userService.register(user);
 
-    // =====================================================
+        // Never return the password hash to the frontend.
+        savedUser.setPassword(null);
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(savedUser);
+    }
+
     // LOGIN
-    // =====================================================
-
     @PostMapping("/login")
-    public ResponseEntity<?> login(
+    public ResponseEntity<LoginResponse> login(
             @RequestBody LoginRequest request) {
 
-        // -----------------------------------------
-        // Validate request
-        // -----------------------------------------
-
-        if (request.getEmail() == null ||
-                request.getEmail().trim().isEmpty()) {
-
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body("Email is required");
+        if (request == null
+                || request.getEmail() == null
+                || request.getEmail().isBlank()
+                || request.getPassword() == null
+                || request.getPassword().isEmpty()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Email and password are required"
+            );
         }
 
+        String email = request.getEmail()
+                .trim()
+                .toLowerCase(Locale.ROOT);
 
-        if (request.getPassword() == null ||
-                request.getPassword().isEmpty()) {
-
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body("Password is required");
-        }
-
-
-        if (request.getRole() == null ||
-                request.getRole().trim().isEmpty()) {
-
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body("Role is required");
-        }
-
-
-        // -----------------------------------------
-        // Find user by email
-        // -----------------------------------------
-
-        Optional<User> optionalUser =
-                userRepository.findByEmail(
-                        request.getEmail().trim()
-                );
-
-
-        if (optionalUser.isEmpty()) {
-
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body("Invalid Email or Password");
-        }
-
-
-        User user = optionalUser.get();
-
-
-        // -----------------------------------------
-        // Check password
-        // -----------------------------------------
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.UNAUTHORIZED,
+                        "Invalid email or password"
+                ));
 
         if (!passwordEncoder.matches(
                 request.getPassword(),
                 user.getPassword())) {
-
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body("Invalid Email or Password");
+            throw new ResponseStatusException(
+                    HttpStatus.UNAUTHORIZED,
+                    "Invalid email or password"
+            );
         }
 
-
-        // -----------------------------------------
-        // Check role
-        // -----------------------------------------
-
-
-
-
-        if (user.getRole() == null ||
-                !request.getRole()
-                        .trim()
-                        .equalsIgnoreCase(
-                                user.getRole().trim()
-                        )) {
-
-            return ResponseEntity
-                    .status(HttpStatus.BAD_REQUEST)
-                    .body("Invalid Role");
-        }
-
-
-        // -----------------------------------------
-        // Generate JWT
-        // -----------------------------------------
-
-        String token =
-                jwtUtil.generateToken(user.getEmail());
-
-
-        // -----------------------------------------
-        // Login Response
-        // -----------------------------------------
+        // The server determines the role from the database.
+        // The client must not choose its own role.
+        String token = jwtUtil.generateToken(user.getEmail());
 
         LoginResponse response = new LoginResponse(
                 user.getId(),
@@ -219,7 +96,6 @@ public class UserController {
                 token,
                 "Login Successful"
         );
-
 
         return ResponseEntity.ok(response);
     }

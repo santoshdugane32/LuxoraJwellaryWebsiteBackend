@@ -1,10 +1,14 @@
+
 package com.example.demo.Security;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
+import io.jsonwebtoken.JwtException;
+
 import jakarta.annotation.PostConstruct;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
@@ -26,36 +30,55 @@ public class JwtUtil {
 
     @PostConstruct
     public void init() {
-        key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException(
+                    "JWT secret must be configured"
+            );
+        }
+
+        // HS256 requires a sufficiently strong secret key.
+        byte[] keyBytes = secret.getBytes(StandardCharsets.UTF_8);
+
+        if (keyBytes.length < 32) {
+            throw new IllegalStateException(
+                    "JWT secret must be at least 32 bytes for HS256"
+            );
+        }
+
+        if (jwtExpiration <= 0) {
+            throw new IllegalStateException(
+                    "JWT expiration must be greater than zero"
+            );
+        }
+
+        key = Keys.hmacShaKeyFor(keyBytes);
     }
 
-    // ==========================
     // Generate JWT
-    // ==========================
     public String generateToken(String email) {
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException(
+                    "Email cannot be empty"
+            );
+        }
+
+        long now = System.currentTimeMillis();
 
         return Jwts.builder()
                 .setSubject(email)
-                .setIssuedAt(new Date())
-                .setExpiration(
-                        new Date(System.currentTimeMillis() + jwtExpiration)
-                )
+                .setIssuedAt(new Date(now))
+                .setExpiration(new Date(now + jwtExpiration))
                 .signWith(key, SignatureAlgorithm.HS256)
                 .compact();
     }
 
-    // ==========================
-    // Extract Email
-    // ==========================
+    // Extract email from the signed JWT
     public String extractEmail(String token) {
         return extractClaims(token).getSubject();
     }
 
-    // ==========================
-    // Extract Claims
-    // ==========================
+    // Parse claims and validate the JWT signature and expiration
     public Claims extractClaims(String token) {
-
         return Jwts.parserBuilder()
                 .setSigningKey(key)
                 .build()
@@ -63,19 +86,28 @@ public class JwtUtil {
                 .getBody();
     }
 
-    // ==========================
-    // Validate Token
-    // ==========================
+    // Validate token against the current user
     public boolean validateToken(
             String token,
             UserDetails userDetails
     ) {
+        if (token == null || token.isBlank() || userDetails == null) {
+            return false;
+        }
 
-        String email = extractEmail(token);
+        try {
+            Claims claims = extractClaims(token);
+            String email = claims.getSubject();
+            Date expiration = claims.getExpiration();
 
-        return email.equals(userDetails.getUsername())
-                && !extractClaims(token)
-                .getExpiration()
-                .before(new Date());
+            return email != null
+                    && !email.isBlank()
+                    && email.equals(userDetails.getUsername())
+                    && expiration != null
+                    && expiration.after(new Date());
+
+        } catch (JwtException | IllegalArgumentException ex) {
+            return false;
+        }
     }
 }

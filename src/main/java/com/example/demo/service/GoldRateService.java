@@ -1,4 +1,3 @@
-
 package com.example.demo.service;
 
 import com.example.demo.model.GoldRate;
@@ -24,32 +23,21 @@ import java.util.concurrent.TimeUnit;
 @Service
 public class GoldRateService {
 
+    private static final BigDecimal TROY_OUNCE_GRAMS =
+            new BigDecimal("31.1034768");
+
+    private static final BigDecimal PURITY_22K =
+            new BigDecimal("22")
+                    .divide(new BigDecimal("24"), 8, RoundingMode.HALF_UP);
+
     private final GoldRateRepository repo;
     private WebClient webClient;
 
     private volatile GoldRate cachedRate;
     private volatile LocalDateTime cacheTime;
 
-    @Value("${goldapi.key}")
+    @Value("${goldapi.key:}")
     private String apiKey;
-
-    @Value("${gold.rate.import-duty:0.06}")
-    private BigDecimal importDuty;
-
-    @Value("${gold.rate.hedging-cost:0.02}")
-    private BigDecimal hedgingCost;
-
-    @Value("${gold.rate.jeweller-margin:0.04}")
-    private BigDecimal jewellerMargin;
-
-    @Value("${gold.rate.demand-spread:0.05}")
-    private BigDecimal demandSpread;
-
-    @Value("${gold.rate.making-charges:0.15}")
-    private BigDecimal makingCharges;
-
-    @Value("${gold.rate.gst:0.03}")
-    private BigDecimal gst;
 
     public GoldRateService(GoldRateRepository repo) {
         this.repo = repo;
@@ -74,6 +62,7 @@ public class GoldRateService {
                 .build();
     }
 
+    // Fetch a fresh rate and save it to PostgreSQL.
     public synchronized GoldRate updateGoldRate() {
         try {
             if (apiKey == null || apiKey.isBlank()) {
@@ -93,40 +82,23 @@ public class GoldRateService {
                         "GoldAPI returned an empty response.");
             }
 
-            System.out.println(
-                    "GoldAPI unit: " + response.get("unit"));
+            BigDecimal gold24k = extract24kPricePerGram(response);
 
-            BigDecimal baseGold24kInr =
-                    extract24kPricePerGram(response);
+            // 22K is calculated from 24K purity.
+            BigDecimal gold22k = gold24k
+                    .multiply(PURITY_22K);
 
-            // Keep your existing pricing adjustment logic.
-            BigDecimal multiplier = BigDecimal.ONE
-                    .add(importDuty)
-                    .add(hedgingCost)
-                    .add(jewellerMargin)
-                    .add(demandSpread)
-                    .add(makingCharges);
-
-            BigDecimal subTotal24k =
-                    baseGold24kInr.multiply(multiplier);
-
-            BigDecimal final24k =
-                    subTotal24k.multiply(BigDecimal.ONE.add(gst));
-
-            BigDecimal final22k =
-                    final24k.multiply(new BigDecimal("0.916"));
-
-            long gold24k = final24k
+            long gold24kRounded = gold24k
                     .setScale(0, RoundingMode.HALF_UP)
                     .longValueExact();
 
-            long gold22k = final22k
+            long gold22kRounded = gold22k
                     .setScale(0, RoundingMode.HALF_UP)
                     .longValueExact();
 
             GoldRate rate = new GoldRate();
-            rate.setGold24k(gold24k);
-            rate.setGold22k(gold22k);
+            rate.setGold24k(gold24kRounded);
+            rate.setGold22k(gold22kRounded);
             rate.setUpdatedAt(LocalDateTime.now());
 
             GoldRate saved = repo.save(rate);
@@ -135,15 +107,16 @@ public class GoldRateService {
             cacheTime = LocalDateTime.now();
 
             System.out.println(
-                    "Gold rate updated successfully. 24K: ₹"
-                            + gold24k + ", 22K: ₹" + gold22k);
+                    "Gold market rate saved. 24K: ₹"
+                            + gold24kRounded
+                            + "/gram, 22K: ₹"
+                            + gold22kRounded + "/gram");
 
             return saved;
 
         } catch (WebClientResponseException e) {
             System.err.println(
-                    "GoldAPI HTTP error: " + e.getStatusCode()
-                            + ". Check API key, access and request limits.");
+                    "GoldAPI HTTP error: " + e.getStatusCode());
 
             return getDatabaseFallback(e);
 
@@ -158,15 +131,15 @@ public class GoldRateService {
     }
 
     private BigDecimal extract24kPricePerGram(Map<?, ?> response) {
-        // Format 1: price_gram_24k is already per gram.
+
+        // Format 1: Direct price per gram.
         Object directPrice = response.get("price_gram_24k");
 
-        if (directPrice instanceof Number
-                || directPrice instanceof String) {
+        if (directPrice != null) {
             return positivePrice(directPrice);
         }
 
-        // Format 2: price_per_unit is an object with a gram value.
+        // Format 2: price_per_unit.gram.
         Object perUnit = response.get("price_per_unit");
 
         if (perUnit instanceof Map<?, ?> unitMap) {
@@ -177,7 +150,7 @@ public class GoldRateService {
             }
         }
 
-        // Format 3: melt_price_per_gram contains a 24k value.
+        // Format 3: melt_price_per_gram.24k.
         Object meltPrice = response.get("melt_price_per_gram");
 
         if (meltPrice instanceof Map<?, ?> meltMap) {
@@ -192,14 +165,23 @@ public class GoldRateService {
             }
         }
 
-        // A plain "price" usually represents a troy ounce.
-        // Never treat it as a per-gram price without conversion.
-        System.err.println(
-                "GoldAPI response keys: " + response.keySet());
+        // Format 4: Convert a troy-ounce price to a gram price.
+        Object ouncePrice = response.get("price");
+        Object unit = response.get("unit");
+
+        if (ouncePrice != null && unit != null
+                && unit.toString().toLowerCase().contains("ounce")) {
+
+            return positivePrice(ouncePrice)
+                    .divide(
+                            TROY_OUNCE_GRAMS,
+                            8,
+                            RoundingMode.HALF_UP);
+        }
 
         throw new IllegalStateException(
-                "No recognized 24K per-gram price found. "
-                        + "Check the response unit and JSON structure.");
+                "No recognized 24K price per gram found. "
+                        + "Check GoldAPI response fields and unit.");
     }
 
     private BigDecimal positivePrice(Object value) {
@@ -220,12 +202,14 @@ public class GoldRateService {
                         cause));
     }
 
+    // Return the latest saved rate without calling GoldAPI every time.
     public GoldRate getLatestRate() {
         GoldRate rate = cachedRate;
         LocalDateTime time = cacheTime;
 
         if (rate != null && time != null
-                && time.isAfter(LocalDateTime.now().minusMinutes(10))) {
+                && time.isAfter(
+                LocalDateTime.now().minusMinutes(10))) {
             return rate;
         }
 

@@ -10,17 +10,16 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.MediaType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
-
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
-
 import org.springframework.stereotype.Component;
-
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -28,233 +27,104 @@ import java.io.IOException;
 @Component
 public class JwtFilter extends OncePerRequestFilter {
 
-    @Autowired
-    private JwtUtil jwtUtil;
+    private static final Logger logger =
+            LoggerFactory.getLogger(JwtFilter.class);
 
-    @Autowired
-    private CustomUserDetailsService userDetailsService;
+    private final JwtUtil jwtUtil;
+    private final CustomUserDetailsService userDetailsService;
 
+    // Constructor injection
+    public JwtFilter(
+            JwtUtil jwtUtil,
+            CustomUserDetailsService userDetailsService) {
+        this.jwtUtil = jwtUtil;
+        this.userDetailsService = userDetailsService;
+    }
 
     @Override
     protected void doFilterInternal(
             HttpServletRequest request,
             HttpServletResponse response,
-            FilterChain filterChain
-    ) throws ServletException, IOException {
+            FilterChain filterChain)
+            throws ServletException, IOException {
 
+        String authHeader = request.getHeader("Authorization");
 
-        System.out.println("\n==============================");
-        System.out.println(
-                "REQUEST : "
-                        + request.getMethod()
-                        + " "
-                        + request.getRequestURI()
-        );
-
-
-        // ==========================================
-        // GET AUTHORIZATION HEADER
-        // ==========================================
-
-        String authHeader =
-                request.getHeader("Authorization");
-
-        System.out.println(
-                "AUTH HEADER : " + authHeader
-        );
-
-
-        // ==========================================
-        // CHECK BEARER TOKEN
-        // ==========================================
-
-        if (authHeader == null ||
-                !authHeader.startsWith("Bearer ")) {
-
-            System.out.println(
-                    "No Bearer Token Found"
-            );
-
-            filterChain.doFilter(
-                    request,
-                    response
-            );
-
+        // No Bearer token: continue through the filter chain.
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            filterChain.doFilter(request, response);
             return;
         }
 
+        String token = authHeader.substring(7).trim();
 
-        // ==========================================
-        // EXTRACT TOKEN
-        // ==========================================
-
-        String token =
-                authHeader.substring(7);
-
-        System.out.println(
-                "TOKEN : " + token
-        );
-
+        if (token.isEmpty()) {
+            writeUnauthorized(response, "Empty JWT token");
+            return;
+        }
 
         try {
+            String email = jwtUtil.extractEmail(token);
 
-
-            // ==========================================
-            // EXTRACT EMAIL
-            // ==========================================
-
-            String email =
-                    jwtUtil.extractEmail(token);
-
-            System.out.println(
-                    "EMAIL FROM TOKEN : " + email
-            );
-
-
-            // ==========================================
-            // CHECK SECURITY CONTEXT
-            // ==========================================
-
-            if (email != null &&
-                    SecurityContextHolder
-                            .getContext()
-                            .getAuthentication() == null) {
-
-
-                // ==========================================
-                // LOAD USER FROM DATABASE
-                // ==========================================
-
-                UserDetails userDetails =
-                        userDetailsService
-                                .loadUserByUsername(email);
-
-
-                System.out.println(
-                        "USER FOUND : "
-                                + userDetails.getUsername()
-                );
-
-
-                System.out.println(
-                        "AUTHORITIES : "
-                                + userDetails.getAuthorities()
-                );
-
-
-                // ==========================================
-                // VALIDATE JWT
-                // ==========================================
-
-                if (jwtUtil.validateToken(
-                        token,
-                        userDetails
-                )) {
-
-
-                    // ==========================================
-                    // CREATE AUTHENTICATION
-                    // ==========================================
-
-                    UsernamePasswordAuthenticationToken authentication =
-                            new UsernamePasswordAuthenticationToken(
-                                    userDetails,
-                                    null,
-                                    userDetails.getAuthorities()
-                            );
-
-
-                    authentication.setDetails(
-                            new WebAuthenticationDetailsSource()
-                                    .buildDetails(request)
-                    );
-
-
-                    // ==========================================
-                    // SET SECURITY CONTEXT
-                    // ==========================================
-
-                    SecurityContextHolder
-                            .getContext()
-                            .setAuthentication(
-                                    authentication
-                            );
-
-
-                    System.out.println(
-                            "JWT AUTHENTICATION SUCCESS"
-                    );
-                }
+            if (email == null || email.isBlank()) {
+                writeUnauthorized(response, "Invalid JWT token");
+                return;
             }
 
+            if (SecurityContextHolder.getContext().getAuthentication() == null) {
 
-            filterChain.doFilter(
-                    request,
-                    response
-            );
+                UserDetails userDetails =
+                        userDetailsService.loadUserByUsername(email);
 
+                if (!jwtUtil.validateToken(token, userDetails)) {
+                    writeUnauthorized(response, "Invalid JWT token");
+                    return;
+                }
+
+                UsernamePasswordAuthenticationToken authentication =
+                        new UsernamePasswordAuthenticationToken(
+                                userDetails,
+                                null,
+                                userDetails.getAuthorities()
+                        );
+
+                authentication.setDetails(
+                        new WebAuthenticationDetailsSource()
+                                .buildDetails(request)
+                );
+
+                SecurityContextHolder.getContext()
+                        .setAuthentication(authentication);
+            }
+
+            filterChain.doFilter(request, response);
 
         } catch (ExpiredJwtException ex) {
-
-            ex.printStackTrace();
-
             SecurityContextHolder.clearContext();
+            writeUnauthorized(response, "JWT token expired");
 
-            response.setStatus(
-                    HttpServletResponse.SC_UNAUTHORIZED
-            );
-
-            response.setContentType(
-                    MediaType.APPLICATION_JSON_VALUE
-            );
-
-            response.getWriter().write("""
-                    {
-                      "message": "JWT Token Expired"
-                    }
-                    """);
-
-
-        } catch (JwtException ex) {
-
-            ex.printStackTrace();
-
+        } catch (UsernameNotFoundException ex) {
             SecurityContextHolder.clearContext();
+            writeUnauthorized(response, "User not found");
 
-            response.setStatus(
-                    HttpServletResponse.SC_UNAUTHORIZED
-            );
-
-            response.setContentType(
-                    MediaType.APPLICATION_JSON_VALUE
-            );
-
-            response.getWriter().write("""
-                    {
-                      "message": "Invalid JWT Token"
-                    }
-                    """);
-
-
-        } catch (Exception ex) {
-
-            ex.printStackTrace();
-
+        } catch (JwtException | IllegalArgumentException ex) {
             SecurityContextHolder.clearContext();
-
-            response.setStatus(
-                    HttpServletResponse.SC_UNAUTHORIZED
-            );
-
-            response.setContentType(
-                    MediaType.APPLICATION_JSON_VALUE
-            );
-
-            response.getWriter().write("""
-                    {
-                      "message": "Authentication Failed"
-                    }
-                    """);
+            logger.warn("JWT validation failed: {}", ex.getMessage());
+            writeUnauthorized(response, "Invalid JWT token");
         }
+    }
+
+    private void writeUnauthorized(
+            HttpServletResponse response,
+            String message) throws IOException {
+
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding("UTF-8");
+
+        // Fixed messages above contain no user-supplied text.
+        response.getWriter().write(
+                "{\"message\":\"" + message + "\"}"
+        );
     }
 }
