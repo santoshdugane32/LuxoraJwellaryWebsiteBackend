@@ -30,6 +30,7 @@ public class UserController {
             JwtUtil jwtUtil,
             PasswordEncoder passwordEncoder,
             UserService userService) {
+
         this.userRepository = userRepository;
         this.jwtUtil = jwtUtil;
         this.passwordEncoder = passwordEncoder;
@@ -39,6 +40,7 @@ public class UserController {
     // REGISTER
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody User user) {
+
         User savedUser = userService.register(user);
 
         // Never return the password hash to the frontend.
@@ -54,14 +56,18 @@ public class UserController {
     public ResponseEntity<LoginResponse> login(
             @RequestBody LoginRequest request) {
 
+        // 1. Validate required fields
         if (request == null
                 || request.getEmail() == null
                 || request.getEmail().isBlank()
                 || request.getPassword() == null
-                || request.getPassword().isEmpty()) {
+                || request.getPassword().isEmpty()
+                || request.getRole() == null
+                || request.getRole().isBlank()) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "Email and password are required"
+                    "Email, password and role are required"
             );
         }
 
@@ -69,25 +75,54 @@ public class UserController {
                 .trim()
                 .toLowerCase(Locale.ROOT);
 
+        String selectedRole = request.getRole()
+                .trim()
+                .toUpperCase(Locale.ROOT);
+
+        // 2. Accept only supported roles
+        if (!selectedRole.equals("USER")
+                && !selectedRole.equals("ADMIN")) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Invalid role selected"
+            );
+        }
+
+        // 3. Find account by email
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.UNAUTHORIZED,
                         "Invalid email or password"
                 ));
 
+        // 4. Verify password
         if (!passwordEncoder.matches(
                 request.getPassword(),
                 user.getPassword())) {
+
             throw new ResponseStatusException(
                     HttpStatus.UNAUTHORIZED,
                     "Invalid email or password"
             );
         }
 
-        // The server determines the role from the database.
-        // The client must not choose its own role.
+        // 5. Verify selected role against the database role
+        String actualRole = user.getRole();
+
+        if (actualRole == null
+                || !selectedRole.equalsIgnoreCase(actualRole.trim())) {
+
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "Selected role does not match this account"
+            );
+        }
+
+        // 6. Generate JWT only after all checks pass
         String token = jwtUtil.generateToken(user.getEmail());
 
+        // 7. Return the actual database role
         LoginResponse response = new LoginResponse(
                 user.getId(),
                 user.getName(),
