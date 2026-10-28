@@ -19,6 +19,7 @@ services:
       - shared-network
     restart: unless-stopped
 
+
   app:
     image: santosh6363/jwellary_backend-app:latest
     container_name: luxora-backend
@@ -27,16 +28,19 @@ services:
     env_file:
       - /home/ubuntu/luxora-backend-env.txt
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/luxora
-      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME:-postgres}
-      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in your .env file}
+      DB_URL: jdbc:postgresql://luxora-postgres:5432/luxora
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in your .env file}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in your .env file}
       JWT_EXPIRATION: 86400000
+      GOLDAPI_KEY: ${GOLDAPI_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - shared-network
     restart: unless-stopped
+
 
 volumes:
   my-volumes:
